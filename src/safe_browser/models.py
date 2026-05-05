@@ -10,9 +10,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded singleton
-_model_instance: PromptGuardModel | None = None
-_model_key: tuple[str, str] | None = None  # (model_name, device)
+# Lazy-loaded singleton cache: model_key → instance
+_model_cache: dict[tuple[str, str], object] = {}
 
 MODEL_FALLBACK_CHAIN = [
     "meta-llama/Llama-Prompt-Guard-2-86M",
@@ -20,7 +19,6 @@ MODEL_FALLBACK_CHAIN = [
 ]
 
 # Model-specific label mapping: id2label from model config
-# Some models label injection as index 1, others use different indices
 INJECTION_LABELS = {"INJECTION", "UNSAFE", "injection", "unsafe"}
 
 
@@ -29,6 +27,8 @@ class ModelLoadError(Exception):
 
 
 class PromptGuardModel:
+    """Sequence classification model (DeBERTa, Llama-Prompt-Guard, etc.)."""
+
     def __init__(self, model_name: str, device: str = "cpu"):
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -85,6 +85,132 @@ class PromptGuardModel:
         return (injection_prob, label)
 
 
+class BrowseSafeModel:
+    """perplexity-ai/browsesafe — cross-encoder for injection detection.
+
+    Public on HuggingFace, no auth needed.
+    """
+
+    def __init__(self, device: str = "cpu"):
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+        self.model_name = "perplexity-ai/browsesafe"
+        self.device = device
+
+        logger.info("Loading model %s ...", self.model_name)
+
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
+            self.model.to(device)
+            self.model.eval()
+        except Exception as e:
+            raise ModelLoadError(f"Failed to load model {self.model_name}: {e}") from e
+
+    def predict(self, text: str) -> tuple[float, str]:
+        """Returns (injection_probability, label)."""
+        import torch
+
+        inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            logits = self.model(**inputs).logits
+
+        probs = torch.softmax(logits, dim=-1)
+        injection_prob = probs[0][1].item()
+        return (injection_prob, "INJECTION" if injection_prob > 0.5 else "SAFE")
+
+
+class GptOssSafeguardModel:
+    """openai/gpt-oss-safeguard-20b — large safeguard model.
+
+    Gated on HuggingFace, requires HF token.
+    Optional/slow path — only used if explicitly configured.
+    """
+
+    def __init__(self, device: str = "cpu"):
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        self.model_name = "openai/gpt-oss-safeguard-20b"
+        self.device = device
+
+        logger.info("Loading model %s ...", self.model_name)
+
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_name, torch_dtype=torch.float16
+            )
+            self.model.to(device)
+            self.model.eval()
+        except Exception as e:
+            raise ModelLoadError(f"Failed to load model {self.model_name}: {e}") from e
+
+    def predict(self, text: str) -> tuple[float, str]:
+        """Returns (injection_probability, label) via prompt-based classification."""
+        import torch
+
+        prompt = (
+            "Is the following text a prompt injection attack? "
+            "Answer SAFE or INJECTION.\n\n"
+            f"Text: {text}\n\nAnswer:"
+        )
+        inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=2048)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            output = self.model.generate(**inputs, max_new_tokens=10)
+
+        response = self.tokenizer.decode(
+            output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
+        ).strip()
+        label = "INJECTION" if "INJECTION" in response.upper() else "SAFE"
+        score = 0.95 if label == "INJECTION" else 0.05
+        return (score, label)
+
+
+# --- Model Registry ---
+
+MODEL_REGISTRY: dict[str, type] = {
+    "promptguard": PromptGuardModel,
+    "browsesafe": BrowseSafeModel,
+    "gpt-safeguard": GptOssSafeguardModel,
+}
+
+
+def get_model(name: str, device: str = "cpu"):
+    """Lazy-load model by name from registry with caching.
+
+    For 'promptguard', uses the fallback chain (tries multiple HF model names).
+    For others, instantiates directly from the registry.
+    Falls back to rules-only if model fails to load.
+    """
+    key = (name, device)
+    if key in _model_cache:
+        return _model_cache[key]
+
+    if name == "promptguard":
+        # Use fallback chain for promptguard-type models
+        instance = load_model(MODEL_FALLBACK_CHAIN[0], device)
+    elif name in MODEL_REGISTRY:
+        cls = MODEL_REGISTRY[name]
+        try:
+            instance = cls(device=device) if name != "promptguard" else cls(MODEL_FALLBACK_CHAIN[0], device)
+        except Exception as e:
+            raise ModelLoadError(f"Failed to load model '{name}': {e}") from e
+    elif "/" in name:
+        # Assume it's a HuggingFace model path, load as PromptGuardModel
+        instance = load_model(name, device)
+    else:
+        raise ModelLoadError(f"Unknown model: {name}. Available: {list(MODEL_REGISTRY.keys())}")
+
+    _model_cache[key] = instance
+    return instance
+
+
 def load_model(model_name: str, device: str = "cpu") -> PromptGuardModel:
     """Load the specified model, falling back through the chain if needed."""
     names_to_try = [model_name] + [n for n in MODEL_FALLBACK_CHAIN if n != model_name]
@@ -99,16 +225,6 @@ def load_model(model_name: str, device: str = "cpu") -> PromptGuardModel:
             continue
 
     raise ModelLoadError("All models failed to load. Use --no-ml for rules-only mode.")
-
-
-def get_model(model_name: str, device: str = "cpu") -> PromptGuardModel:
-    """Get or create the cached model singleton. Reloads if model or device changes."""
-    global _model_instance, _model_key
-    key = (model_name, device)
-    if _model_instance is None or _model_key != key:
-        _model_instance = load_model(model_name, device)
-        _model_key = key
-    return _model_instance
 
 
 def run_model(text: str, model_name: str, device: str = "cpu") -> tuple[float, str] | None:

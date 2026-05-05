@@ -46,6 +46,8 @@ def _run_scan(
     config_path: Path | None,
     threshold: float | None,
     no_ml: bool,
+    adapter: str | None = None,
+    model: str | None = None,
 ):
     """Shared logic for check/scan commands."""
     from .scanner import scan as run_scan
@@ -57,8 +59,10 @@ def _run_scan(
             typer.echo(f"Error: threshold must be 0.0-1.0, got {threshold}", err=True)
             raise typer.Exit(code=2)
         config.block_threshold = threshold
-    if no_ml:
+    if no_ml or model == "rules":
         config.use_ml = False
+    elif model is not None:
+        config.model_name = model
 
     logging.basicConfig(level=getattr(logging, config.log_level, logging.WARNING))
 
@@ -71,8 +75,8 @@ def _run_scan(
             typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=2)
 
-    # Scan
-    result = run_scan(text, config)
+    # Scan (adapter passed through to scanner)
+    result = run_scan(text, config, adapter=adapter)
 
     # Output
     if not quiet:
@@ -96,9 +100,17 @@ def check(
     ] = None,
     threshold: Annotated[Optional[float], typer.Option("--threshold", help="Override block threshold")] = None,
     no_ml: Annotated[bool, typer.Option("--no-ml", help="Skip ML model, rules only")] = False,
+    adapter: Annotated[
+        Optional[str],
+        typer.Option("--adapter", "-a", help="Input adapter: auto, camoufox, agent-browser, raw"),
+    ] = None,
+    model: Annotated[
+        Optional[str],
+        typer.Option("--model", "-m", help="Model: promptguard, browsesafe, gpt-safeguard, rules"),
+    ] = None,
 ):
     """Check content for prompt injection attacks (primary command)."""
-    _run_scan(content, file, output_json, quiet, config_path, threshold, no_ml)
+    _run_scan(content, file, output_json, quiet, config_path, threshold, no_ml, adapter=adapter, model=model)
 
 
 @app.command()
@@ -113,9 +125,17 @@ def scan(
     ] = None,
     threshold: Annotated[Optional[float], typer.Option("--threshold", help="Override block threshold")] = None,
     no_ml: Annotated[bool, typer.Option("--no-ml", help="Skip ML model, rules only")] = False,
+    adapter: Annotated[
+        Optional[str],
+        typer.Option("--adapter", "-a", help="Input adapter: auto, camoufox, agent-browser, raw"),
+    ] = None,
+    model: Annotated[
+        Optional[str],
+        typer.Option("--model", "-m", help="Model: promptguard, browsesafe, gpt-safeguard, rules"),
+    ] = None,
 ):
     """Alias for check — scan content for prompt injection attacks."""
-    _run_scan(content, file, output_json, quiet, config_path, threshold, no_ml)
+    _run_scan(content, file, output_json, quiet, config_path, threshold, no_ml, adapter=adapter, model=model)
 
 
 @app.command()
@@ -154,16 +174,14 @@ def doctor():
 def models():
     """List available detection models."""
     typer.echo("Available detection models:\n")
-    typer.echo("  meta-llama/Llama-Prompt-Guard-2-86M")
-    typer.echo("    Fast, lightweight (86M params). Good for real-time screening.\n")
-    typer.echo("  protectai/deberta-v3-base-prompt-injection-v2")
-    typer.echo("    DeBERTa-based, balanced accuracy/speed. Default.\n")
-    typer.echo("  perplexity-ai/browsesafe  (Phase 2)")
-    typer.echo("    Fine-tuned for browser-specific injection patterns.\n")
-    typer.echo("  openai/gpt-oss-safeguard-20b  (Phase 2)")
-    typer.echo("    Large model, highest accuracy, slower inference.\n")
-    typer.echo("  rule-based  (always available)")
-    typer.echo("    Regex pattern matching. No model download needed.")
+    typer.echo("  promptguard  (--model promptguard)")
+    typer.echo("    DeBERTa / Llama-Prompt-Guard fallback chain. Default.\n")
+    typer.echo("  browsesafe  (--model browsesafe)")
+    typer.echo("    perplexity-ai/browsesafe — fine-tuned for browser injection. Public.\n")
+    typer.echo("  gpt-safeguard  (--model gpt-safeguard)")
+    typer.echo("    openai/gpt-oss-safeguard-20b — large model, highest accuracy. Gated (HF token).\n")
+    typer.echo("  rules  (--model rules)")
+    typer.echo("    Regex pattern matching only. No model download needed.")
 
 
 def _print_human(result, text_length: int) -> None:

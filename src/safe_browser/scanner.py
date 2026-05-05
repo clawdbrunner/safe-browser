@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from .adapters import adapt_input
 from .config import Config
 from .rules import RuleMatch, check_rules
 
@@ -43,10 +44,17 @@ class ScanResult:
         }
 
 
-def scan(text: str, config: Config) -> ScanResult:
-    """Run the full scanning pipeline on the input text."""
+def scan(text: str, config: Config, adapter: str | None = None) -> ScanResult:
+    """Run the full scanning pipeline on the input text.
+
+    Pipeline: input → adapter (parse browser format) → scanner (rules + model) → result
+    """
+    # 0. Adapt input (parse browser format if needed)
+    effective_adapter = adapter or config.adapter
+    adapted_text = adapt_input(text, effective_adapter)
+
     # 1. Rule-based checks (always, fast)
-    rule_result = check_rules(text, config.custom_patterns if config.rules_enabled else None)
+    rule_result = check_rules(adapted_text, config.custom_patterns if config.rules_enabled else None)
     rule_match_names = [m.name for m in rule_result.matches]
     rule_details = [
         {"name": m.name, "severity": m.severity, "matched": m.matched_text}
@@ -61,7 +69,7 @@ def scan(text: str, config: Config) -> ScanResult:
     if config.use_ml:
         from .models import run_model
 
-        result = run_model(text, config.model_name, config.device)
+        result = run_model(adapted_text, config.model_name, config.device)
         if result is not None:
             model_score, model_label = result
         else:

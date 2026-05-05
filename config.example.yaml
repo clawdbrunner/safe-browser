@@ -2,15 +2,26 @@
 # Copy to ~/.config/safe-browser/config.yaml
 
 model:
-  # Primary: protectai/deberta-v3-base-prompt-injection-v2 (public, no auth)
-  # Alternative: meta-llama/Llama-Prompt-Guard-2-86M (requires HF token)
-  name: "protectai/deberta-v3-base-prompt-injection-v2"
+  # Available: "promptguard", "browsesafe", "gpt-safeguard", "rules"
+  # promptguard: DeBERTa / Llama-Prompt-Guard fallback chain (default, public)
+  # browsesafe: perplexity-ai/browsesafe (public, no auth)
+  # gpt-safeguard: openai/gpt-oss-safeguard-20b (gated, requires HF token)
+  # rules: rule-based only, no model download
+  name: "promptguard"
   device: "cpu"  # "cuda", "mps" for Apple Silicon
   fail_closed: true  # Treat as suspicious when model fails
 
+adapter:
+  # Input format adapter: "auto", "camoufox", "agent_browser", "raw"
+  # auto: detect format from content (default)
+  # camoufox: parse camoufox snapshot JSON
+  # agent_browser: parse agent-browser accessibility tree JSON
+  # raw: plain text passthrough
+  default: "auto"
+
 thresholds:
-  block: 0.9    # score >= this → malicious
-  caution: 0.5  # score >= this → suspicious
+  block: 0.9    # score >= this -> malicious
+  caution: 0.5  # score >= this -> suspicious
 
 rules:
   enabled: true

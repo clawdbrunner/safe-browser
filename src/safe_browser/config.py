@@ -14,9 +14,12 @@ DEFAULT_CONFIG_PATH = Path.home() / ".config" / "safe-browser" / "config.yaml"
 
 DEFAULTS = {
     "model": {
-        "name": "protectai/deberta-v3-base-prompt-injection-v2",
+        "name": "promptguard",
         "device": "cpu",
         "fail_closed": True,
+    },
+    "adapter": {
+        "default": "auto",
     },
     "thresholds": {
         "block": 0.9,
@@ -40,6 +43,7 @@ class Config:
     model_name: str = DEFAULTS["model"]["name"]
     device: str = DEFAULTS["model"]["device"]
     fail_closed: bool = DEFAULTS["model"]["fail_closed"]
+    adapter: str = DEFAULTS["adapter"]["default"]
     block_threshold: float = DEFAULTS["thresholds"]["block"]
     caution_threshold: float = DEFAULTS["thresholds"]["caution"]
     rules_enabled: bool = DEFAULTS["rules"]["enabled"]
@@ -76,6 +80,7 @@ class Config:
             return cls()
 
         model = raw.get("model", {})
+        adapter_cfg = raw.get("adapter", {})
         thresholds = raw.get("thresholds", {})
         rules = raw.get("rules", {})
         limits = raw.get("limits", {})
@@ -98,6 +103,7 @@ class Config:
                 model_name=model.get("name", DEFAULTS["model"]["name"]),
                 device=model.get("device", DEFAULTS["model"]["device"]),
                 fail_closed=model.get("fail_closed", DEFAULTS["model"]["fail_closed"]),
+                adapter=adapter_cfg.get("default", DEFAULTS["adapter"]["default"]),
                 block_threshold=thresholds.get("block", DEFAULTS["thresholds"]["block"]),
                 caution_threshold=thresholds.get("caution", DEFAULTS["thresholds"]["caution"]),
                 rules_enabled=rules.get("enabled", DEFAULTS["rules"]["enabled"]),
