@@ -33,7 +33,6 @@ class PromptGuardModel:
         self.device = device
 
         logger.info("Loading model %s ...", model_name)
-        print(f"Loading model {model_name}...", file=sys.stderr)
 
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)

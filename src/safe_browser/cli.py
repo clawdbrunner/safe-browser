@@ -38,20 +38,16 @@ def main(
     pass
 
 
-@app.command()
-def scan(
-    content: Annotated[Optional[str], typer.Option("--content", "-c", help="Scan a string directly")] = None,
-    file: Annotated[Optional[Path], typer.Option("--file", "-f", help="Scan file contents")] = None,
-    output_json: Annotated[bool, typer.Option("--json", help="Output JSON")] = False,
-    quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Only exit code, no output")] = False,
-    config_path: Annotated[
-        Optional[Path],
-        typer.Option("--config", help="Config file path"),
-    ] = None,
-    threshold: Annotated[Optional[float], typer.Option("--threshold", help="Override block threshold")] = None,
-    no_ml: Annotated[bool, typer.Option("--no-ml", help="Skip ML model, rules only")] = False,
+def _run_scan(
+    content: str | None,
+    file: Path | None,
+    output_json: bool,
+    quiet: bool,
+    config_path: Path | None,
+    threshold: float | None,
+    no_ml: bool,
 ):
-    """Scan content for prompt injection attacks."""
+    """Shared logic for check/scan commands."""
     from .scanner import scan as run_scan
 
     # Load config
@@ -85,33 +81,42 @@ def scan(
     raise typer.Exit(code=result.exit_code)
 
 
-def _print_human(result, text_length: int) -> None:
-    """Print human-readable scan results."""
-    from .scanner import ScanResult
-
-    colors = {"safe": typer.colors.GREEN, "suspicious": typer.colors.YELLOW, "malicious": typer.colors.RED}
-    color = colors.get(result.decision, typer.colors.WHITE)
-
-    typer.echo()
-    typer.secho(f"  Decision: {result.decision.upper()}", fg=color, bold=True)
-    typer.echo(f"  Score:    {result.score:.4f}")
-    typer.echo(f"  Input:    {text_length} chars")
-
-    if result.model_score is not None:
-        typer.echo(f"  Model:    {result.model_label} ({result.model_score:.4f})")
-    else:
-        typer.echo("  Model:    not used")
-
-    if result.rule_matches:
-        typer.echo(f"  Rules:    {', '.join(result.rule_matches)}")
-    else:
-        typer.echo("  Rules:    no matches")
-
-    typer.echo()
+@app.command()
+def check(
+    content: Annotated[Optional[str], typer.Option("--content", "-c", help="Scan a string directly")] = None,
+    file: Annotated[Optional[Path], typer.Option("--file", "-f", help="Scan file contents")] = None,
+    output_json: Annotated[bool, typer.Option("--json", help="Output JSON")] = False,
+    quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Only exit code, no output")] = False,
+    config_path: Annotated[
+        Optional[Path],
+        typer.Option("--config", help="Config file path"),
+    ] = None,
+    threshold: Annotated[Optional[float], typer.Option("--threshold", help="Override block threshold")] = None,
+    no_ml: Annotated[bool, typer.Option("--no-ml", help="Skip ML model, rules only")] = False,
+):
+    """Check content for prompt injection attacks (primary command)."""
+    _run_scan(content, file, output_json, quiet, config_path, threshold, no_ml)
 
 
 @app.command()
-def check():
+def scan(
+    content: Annotated[Optional[str], typer.Option("--content", "-c", help="Scan a string directly")] = None,
+    file: Annotated[Optional[Path], typer.Option("--file", "-f", help="Scan file contents")] = None,
+    output_json: Annotated[bool, typer.Option("--json", help="Output JSON")] = False,
+    quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Only exit code, no output")] = False,
+    config_path: Annotated[
+        Optional[Path],
+        typer.Option("--config", help="Config file path"),
+    ] = None,
+    threshold: Annotated[Optional[float], typer.Option("--threshold", help="Override block threshold")] = None,
+    no_ml: Annotated[bool, typer.Option("--no-ml", help="Skip ML model, rules only")] = False,
+):
+    """Alias for check — scan content for prompt injection attacks."""
+    _run_scan(content, file, output_json, quiet, config_path, threshold, no_ml)
+
+
+@app.command()
+def doctor():
     """Pre-flight check: verify models are downloadable and config is valid."""
     typer.echo("Checking configuration...")
 
@@ -140,3 +145,42 @@ def check():
             raise typer.Exit(code=1)
     else:
         typer.secho("\nConfig check passed (ML disabled).", fg=typer.colors.GREEN, bold=True)
+
+
+@app.command()
+def models():
+    """List available detection models."""
+    typer.echo("Available detection models:\n")
+    typer.echo("  meta-llama/Llama-Prompt-Guard-2-86M")
+    typer.echo("    Fast, lightweight (86M params). Good for real-time screening.\n")
+    typer.echo("  protectai/deberta-v3-base-prompt-injection-v2")
+    typer.echo("    DeBERTa-based, balanced accuracy/speed. Default.\n")
+    typer.echo("  perplexity-ai/browsesafe  (Phase 2)")
+    typer.echo("    Fine-tuned for browser-specific injection patterns.\n")
+    typer.echo("  openai/gpt-oss-safeguard-20b  (Phase 2)")
+    typer.echo("    Large model, highest accuracy, slower inference.\n")
+    typer.echo("  rule-based  (always available)")
+    typer.echo("    Regex pattern matching. No model download needed.")
+
+
+def _print_human(result, text_length: int) -> None:
+    """Print human-readable scan results."""
+    colors = {"safe": typer.colors.GREEN, "suspicious": typer.colors.YELLOW, "malicious": typer.colors.RED}
+    color = colors.get(result.decision, typer.colors.WHITE)
+
+    typer.echo()
+    typer.secho(f"  Decision: {result.decision.upper()}", fg=color, bold=True)
+    typer.echo(f"  Score:    {result.score:.4f}")
+    typer.echo(f"  Input:    {text_length} chars")
+
+    if result.model_score is not None:
+        typer.echo(f"  Model:    {result.model_label} ({result.model_score:.4f})")
+    else:
+        typer.echo("  Model:    not used")
+
+    if result.rule_matches:
+        typer.echo(f"  Rules:    {', '.join(result.rule_matches)}")
+    else:
+        typer.echo("  Rules:    no matches")
+
+    typer.echo()
