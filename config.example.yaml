@@ -6,7 +6,7 @@ model:
   # Alternative: meta-llama/Llama-Prompt-Guard-2-86M (requires HF token)
   name: "protectai/deberta-v3-base-prompt-injection-v2"
   device: "cpu"  # "cuda", "mps" for Apple Silicon
-  fallback_to_rules: true
+  fail_closed: true  # Treat as suspicious when model fails
 
 thresholds:
   block: 0.9    # score >= this → malicious
