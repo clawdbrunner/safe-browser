@@ -51,6 +51,15 @@ class Config:
     use_ml: bool = True
     log_level: str = DEFAULTS["logging"]["level"]
     max_input_bytes: int = DEFAULTS["limits"]["max_input_bytes"]
+    models: list[dict] = field(default_factory=list)
+
+    @property
+    def model_chain(self) -> list[str]:
+        """Return ordered list of model names from the models list."""
+        if self.models:
+            sorted_models = sorted(self.models, key=lambda m: m.get("priority", 999))
+            return [m["name"] for m in sorted_models]
+        return [self.model_name]
 
     def __post_init__(self):
         """Validate config values."""
@@ -80,6 +89,9 @@ class Config:
             return cls()
 
         model = raw.get("model", {})
+        if not isinstance(model, dict):
+            model = {}
+        models_list_raw = raw.get("models", [])
         adapter_cfg = raw.get("adapter", {})
         thresholds = raw.get("thresholds", {})
         rules = raw.get("rules", {})
@@ -98,6 +110,15 @@ class Config:
             else:
                 logger.warning("Skipping malformed custom pattern: %s", p)
 
+        # Parse models list (Phase 2 format)
+        validated_models: list[dict] = []
+        if isinstance(models_list_raw, list):
+            for m in models_list_raw:
+                if isinstance(m, dict) and "name" in m:
+                    validated_models.append(m)
+                else:
+                    logger.warning("Skipping malformed model entry: %s", m)
+
         try:
             return cls(
                 model_name=model.get("name", DEFAULTS["model"]["name"]),
@@ -110,6 +131,7 @@ class Config:
                 custom_patterns=validated_patterns,
                 log_level=log_cfg.get("level", DEFAULTS["logging"]["level"]),
                 max_input_bytes=limits.get("max_input_bytes", DEFAULTS["limits"]["max_input_bytes"]),
+                models=validated_models,
             )
         except ValueError as e:
             logger.warning("Config validation error: %s — using defaults", e)

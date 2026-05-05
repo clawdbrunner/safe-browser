@@ -11,6 +11,8 @@ from .rules import RuleMatch, check_rules
 
 logger = logging.getLogger(__name__)
 
+MODEL_PRIORITY = ["rules", "promptguard", "browsesafe", "gpt-safeguard"]
+
 
 @dataclass
 class ScanResult:
@@ -44,10 +46,40 @@ class ScanResult:
         }
 
 
+def _merge_chain(results: list[tuple], config: Config) -> tuple[str, float]:
+    """Merge results from the model priority chain into a final decision."""
+    rule_result = None
+    best_model_score: float | None = None
+    best_model_label: str | None = None
+    model_failed = False
+
+    for entry in results:
+        if entry[0] == "rules":
+            rule_result = entry[1]
+        else:
+            # (model_name, score, label) or (model_name, None) for failed
+            if len(entry) == 3:
+                _, score, label = entry
+                if best_model_score is None or score > best_model_score:
+                    best_model_score = score
+                    best_model_label = label
+
+    if rule_result is None:
+        from .rules import RuleResult
+        rule_result = RuleResult(matches=[], max_severity="none")
+
+    # Check if all models failed (no model entries with scores)
+    model_entries = [e for e in results if e[0] != "rules"]
+    if model_entries and best_model_score is None:
+        model_failed = True
+
+    return _merge(rule_result, best_model_score, best_model_label, config, model_failed)
+
+
 def scan(text: str, config: Config, adapter: str | None = None) -> ScanResult:
     """Run the full scanning pipeline on the input text.
 
-    Pipeline: input → adapter (parse browser format) → scanner (rules + model) → result
+    Pipeline: input → adapter (parse browser format) → scanner (rules + model chain) → result
     """
     # 0. Adapt input (parse browser format if needed)
     effective_adapter = adapter or config.adapter
@@ -61,19 +93,41 @@ def scan(text: str, config: Config, adapter: str | None = None) -> ScanResult:
         for m in rule_result.matches
     ]
 
-    # 2. ML model (if enabled)
+    # 2. Model priority chain
+    chain_results: list[tuple] = []
+    chain_results.append(("rules", rule_result))
+
     model_score: float | None = None
     model_label: str | None = None
     model_failed = False
+    models_run: list[str] = []
 
     if config.use_ml:
         from .models import run_model
 
-        result = run_model(adapted_text, config.model_name, config.device)
-        if result is not None:
-            model_score, model_label = result
+        # Short-circuit: if rules find HIGH severity, skip slower models
+        if not rule_result.has_high:
+            for model_name in config.model_chain:
+                if model_name == "rules":
+                    continue
+                result = run_model(adapted_text, model_name, config.device)
+                models_run.append(model_name)
+                if result is not None:
+                    score, label = result
+                    chain_results.append((model_name, score, label))
+                    # Track best score for backward compat
+                    if model_score is None or score > model_score:
+                        model_score = score
+                        model_label = label
+                    # Short-circuit on high-confidence MALICIOUS
+                    if score >= config.block_threshold:
+                        break
+                else:
+                    model_failed = True
         else:
-            model_failed = True
+            # Rules found HIGH — still check if we should set model_failed
+            # (no models run, so not really "failed")
+            pass
 
     # 3. Merge results
     decision, score = _merge(rule_result, model_score, model_label, config, model_failed)
@@ -86,7 +140,7 @@ def scan(text: str, config: Config, adapter: str | None = None) -> ScanResult:
         rule_matches=rule_match_names,
         details={
             "rules": rule_details,
-            "model": config.model_name if config.use_ml else "disabled",
+            "model": models_run if models_run else (config.model_name if config.use_ml else "disabled"),
             "model_failed": model_failed if config.use_ml else None,
             "thresholds": {
                 "block": config.block_threshold,

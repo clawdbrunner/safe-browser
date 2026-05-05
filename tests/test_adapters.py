@@ -14,6 +14,7 @@ from safe_browser.adapters import (
     adapt_input,
     detect_adapter,
     get_input,
+    parse_agent_browser_text,
     parse_agent_browser_tree,
     parse_camoufox_snapshot,
     read_file,
@@ -265,6 +266,130 @@ class TestAdaptInput:
         with pytest.raises(AdapterError, match="invalid JSON"):
             adapt_input("not json", "camoufox")
 
-    def test_agent_browser_invalid_json_raises(self):
-        with pytest.raises(AdapterError, match="invalid JSON"):
-            adapt_input("not json", "agent_browser")
+    def test_agent_browser_text_format(self):
+        """agent_browser adapter should parse text format when content is not JSON."""
+        content = '[WebArea] "Page Title"\n  [heading] "Welcome"\n  [button] "Submit" ref=e1'
+        result = adapt_input(content, "agent_browser")
+        assert "Page Title" in result
+        assert "Welcome" in result
+        assert "Submit" in result
+
+
+class TestParseAgentBrowserText:
+    def test_basic_text(self):
+        content = '[WebArea] "Page Title"\n  [heading] "Welcome"\n  [link] "Click here" ref=e1'
+        result = parse_agent_browser_text(content)
+        assert "Page Title" in result
+        assert "Welcome" in result
+        assert "Click here" in result
+        assert "e1" in result
+
+    def test_plain_text_lines(self):
+        content = '[textbox] "Search" ref=e2\n    "current text"'
+        result = parse_agent_browser_text(content)
+        assert "Search" in result
+        assert "current text" in result
+
+    def test_role_without_name(self):
+        content = '[separator]'
+        result = parse_agent_browser_text(content)
+        assert "separator" in result
+
+    def test_empty_content(self):
+        result = parse_agent_browser_text("")
+        assert result == ""
+
+    def test_ref_extraction(self):
+        content = '[button] "Submit" ref=e3'
+        result = parse_agent_browser_text(content)
+        assert "e3" in result
+
+
+class TestDetectAgentBrowserText:
+    def test_detect_text_format(self):
+        content = '[WebArea] "Page Title"\n  [heading] "Welcome"\n  [button] "Submit"'
+        assert detect_adapter(content) == "agent_browser"
+
+    def test_plain_text_not_detected(self):
+        content = "Just some regular text about [things]"
+        assert detect_adapter(content) == "raw"
+
+
+class TestCamoufoxHiddenAttributes:
+    def test_aria_hidden_marked(self):
+        data = {
+            "snapshot": {
+                "documents": [{
+                    "nodes": [
+                        {"type": "text", "name": "visible text"},
+                        {"type": "text", "name": "hidden injection", "aria-hidden": "true"},
+                    ]
+                }]
+            }
+        }
+        result = parse_camoufox_snapshot(data)
+        assert "visible text" in result
+        assert "[HIDDEN] hidden injection" in result
+
+    def test_display_none_marked(self):
+        data = {
+            "snapshot": {
+                "documents": [{
+                    "nodes": [
+                        {"type": "text", "name": "sneaky text", "style": "display:none"},
+                    ]
+                }]
+            }
+        }
+        result = parse_camoufox_snapshot(data)
+        assert "[HIDDEN] sneaky text" in result
+
+    def test_visibility_hidden_marked(self):
+        data = {
+            "snapshot": {
+                "documents": [{
+                    "nodes": [
+                        {"type": "text", "name": "invisible", "style": "visibility: hidden"},
+                    ]
+                }]
+            }
+        }
+        result = parse_camoufox_snapshot(data)
+        assert "[HIDDEN] invisible" in result
+
+    def test_normal_style_not_marked(self):
+        data = {
+            "snapshot": {
+                "documents": [{
+                    "nodes": [
+                        {"type": "text", "name": "normal", "style": "color: red"},
+                    ]
+                }]
+            }
+        }
+        result = parse_camoufox_snapshot(data)
+        assert "normal" in result
+        assert "[HIDDEN]" not in result
+
+
+class TestDepthGuard:
+    def test_deeply_nested_camoufox(self):
+        """Deeply nested JSON should stop at max_depth without crashing."""
+        # Build a deeply nested structure
+        node = {"type": "text", "name": "deepest"}
+        for _ in range(100):
+            node = {"type": "div", "children": [node]}
+        data = {"snapshot": {"documents": [{"nodes": [node]}]}}
+        # Should not raise RecursionError
+        result = parse_camoufox_snapshot(data, max_depth=50)
+        # May or may not find "deepest" depending on depth, but shouldn't crash
+        assert isinstance(result, str)
+
+    def test_deeply_nested_agent_browser(self):
+        """Deeply nested JSON should stop at max_depth without crashing."""
+        node = {"role": "text", "name": "deepest", "children": []}
+        for _ in range(100):
+            node = {"role": "div", "name": "", "children": [node]}
+        # Should not raise RecursionError
+        result = parse_agent_browser_tree(node, max_depth=50)
+        assert isinstance(result, str)

@@ -232,6 +232,6 @@ def run_model(text: str, model_name: str, device: str = "cpu") -> tuple[float, s
     try:
         model = get_model(model_name, device)
         return model.predict(text)
-    except ModelLoadError:
-        logger.warning("ML model unavailable, falling back to rules-only")
+    except Exception as e:
+        logger.warning("Model %s failed: %s", model_name, e)
         return None

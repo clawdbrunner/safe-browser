@@ -14,6 +14,9 @@ from . import __version__
 from .adapters import AdapterError, get_input
 from .config import Config
 
+VALID_ADAPTERS = {"auto", "camoufox", "agent-browser", "agent_browser", "raw"}
+VALID_MODELS = {"promptguard", "browsesafe", "gpt-safeguard", "rules"}
+
 app = typer.Typer(
     name="safe-browser",
     help="Screen browser content for prompt injection attacks.",
@@ -52,6 +55,22 @@ def _run_scan(
     """Shared logic for check/scan commands."""
     from .scanner import scan as run_scan
 
+    # Validate --adapter
+    if adapter is not None:
+        normalized_adapter = adapter.replace("-", "_")
+        if adapter not in VALID_ADAPTERS and normalized_adapter not in VALID_ADAPTERS:
+            valid = ", ".join(sorted(a for a in VALID_ADAPTERS if a != "agent_browser"))
+            typer.echo(f"Error: invalid adapter '{adapter}'. Valid options: {valid}", err=True)
+            raise typer.Exit(code=2)
+        # Normalize hyphen to underscore
+        adapter = normalized_adapter
+
+    # Validate --model
+    if model is not None and model not in VALID_MODELS:
+        valid = ", ".join(sorted(VALID_MODELS))
+        typer.echo(f"Error: invalid model '{model}'. Valid options: {valid}", err=True)
+        raise typer.Exit(code=2)
+
     # Load config
     config = Config.from_file(config_path)
     if threshold is not None:
@@ -76,7 +95,12 @@ def _run_scan(
         raise typer.Exit(code=2)
 
     # Scan (adapter passed through to scanner)
-    result = run_scan(text, config, adapter=adapter)
+    try:
+        result = run_scan(text, config, adapter=adapter)
+    except AdapterError as e:
+        if not quiet:
+            typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=2)
 
     # Output
     if not quiet:
@@ -155,7 +179,7 @@ def doctor():
             from .models import get_model
 
             model = get_model(config.model_name, config.device)
-            typer.secho(f"  Model loaded: {model.model_name} ({model.num_labels} labels)", fg=typer.colors.GREEN)
+            typer.secho(f"  Model loaded: {model.model_name}", fg=typer.colors.GREEN)
 
             # Quick self-test
             score, label = model.predict("Hello, how are you?")
