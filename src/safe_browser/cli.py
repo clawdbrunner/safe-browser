@@ -53,6 +53,9 @@ def _run_scan(
     # Load config
     config = Config.from_file(config_path)
     if threshold is not None:
+        if not 0.0 <= threshold <= 1.0:
+            typer.echo(f"Error: threshold must be 0.0-1.0, got {threshold}", err=True)
+            raise typer.Exit(code=2)
         config.block_threshold = threshold
     if no_ml:
         config.use_ml = False
@@ -62,7 +65,7 @@ def _run_scan(
     # Read input
     try:
         file_str = str(file) if file is not None else None
-        text = get_input(content=content, file=file_str)
+        text = get_input(content=content, file=file_str, max_bytes=config.max_input_bytes)
     except AdapterError as e:
         if not quiet:
             typer.echo(f"Error: {e}", err=True)
@@ -140,8 +143,8 @@ def doctor():
             typer.secho("\nAll checks passed.", fg=typer.colors.GREEN, bold=True)
         except Exception as e:
             typer.secho(f"  Model load failed: {e}", fg=typer.colors.RED)
-            if config.fallback_to_rules:
-                typer.echo("  Fallback to rules-only mode is enabled.")
+            if config.fail_closed:
+                typer.echo("  Fallback:  fail-closed (suspicious on model failure)")
             raise typer.Exit(code=1)
     else:
         typer.secho("\nConfig check passed (ML disabled).", fg=typer.colors.GREEN, bold=True)

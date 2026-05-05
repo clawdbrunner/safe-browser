@@ -16,7 +16,6 @@ DEFAULTS = {
     "model": {
         "name": "protectai/deberta-v3-base-prompt-injection-v2",
         "device": "cpu",
-        "fallback_to_rules": True,
         "fail_closed": True,
     },
     "thresholds": {
@@ -40,7 +39,6 @@ DEFAULTS = {
 class Config:
     model_name: str = DEFAULTS["model"]["name"]
     device: str = DEFAULTS["model"]["device"]
-    fallback_to_rules: bool = DEFAULTS["model"]["fallback_to_rules"]
     fail_closed: bool = DEFAULTS["model"]["fail_closed"]
     block_threshold: float = DEFAULTS["thresholds"]["block"]
     caution_threshold: float = DEFAULTS["thresholds"]["caution"]
@@ -99,7 +97,6 @@ class Config:
             return cls(
                 model_name=model.get("name", DEFAULTS["model"]["name"]),
                 device=model.get("device", DEFAULTS["model"]["device"]),
-                fallback_to_rules=model.get("fallback_to_rules", DEFAULTS["model"]["fallback_to_rules"]),
                 fail_closed=model.get("fail_closed", DEFAULTS["model"]["fail_closed"]),
                 block_threshold=thresholds.get("block", DEFAULTS["thresholds"]["block"]),
                 caution_threshold=thresholds.get("caution", DEFAULTS["thresholds"]["caution"]),

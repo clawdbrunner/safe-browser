@@ -75,7 +75,13 @@ def check_rules(text: str, custom_patterns: list[dict] | None = None) -> RuleRes
     max_severity = "none"
 
     for rule in all_rules:
-        pattern = rule["pattern"]
+        name = rule.get("name", "unknown")
+        pattern = rule.get("pattern")
+        severity = rule.get("severity", "low")
+
+        if not pattern:
+            continue
+
         try:
             found = re.search(pattern, text)
         except re.error:
@@ -83,12 +89,12 @@ def check_rules(text: str, custom_patterns: list[dict] | None = None) -> RuleRes
 
         if found:
             match = RuleMatch(
-                name=rule["name"],
-                severity=rule["severity"],
+                name=name,
+                severity=severity,
                 matched_text=found.group()[:100],  # truncate long matches
             )
             matches.append(match)
-            if SEVERITY_ORDER.get(rule["severity"], 0) > SEVERITY_ORDER.get(max_severity, 0):
-                max_severity = rule["severity"]
+            if SEVERITY_ORDER.get(severity, 0) > SEVERITY_ORDER.get(max_severity, 0):
+                max_severity = severity
 
     return RuleResult(matches=matches, max_severity=max_severity)

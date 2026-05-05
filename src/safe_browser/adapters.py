@@ -48,10 +48,10 @@ def read_string(content: str) -> str:
     return content
 
 
-def get_input(content: str | None = None, file: str | None = None) -> str:
+def get_input(content: str | None = None, file: str | None = None, max_bytes: int = 10 * 1024 * 1024) -> str:
     """Resolve input from the available sources in priority order: string > file > stdin."""
     if content is not None:
         return read_string(content)
     if file is not None:
-        return read_file(file)
-    return read_stdin()
+        return read_file(file, max_bytes=max_bytes)
+    return read_stdin(max_bytes=max_bytes)
