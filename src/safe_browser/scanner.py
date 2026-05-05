@@ -56,6 +56,7 @@ def scan(text: str, config: Config) -> ScanResult:
     # 2. ML model (if enabled)
     model_score: float | None = None
     model_label: str | None = None
+    model_failed = False
 
     if config.use_ml:
         from .models import run_model
@@ -63,9 +64,11 @@ def scan(text: str, config: Config) -> ScanResult:
         result = run_model(text, config.model_name, config.device)
         if result is not None:
             model_score, model_label = result
+        else:
+            model_failed = True
 
     # 3. Merge results
-    decision, score = _merge(rule_result, model_score, model_label, config)
+    decision, score = _merge(rule_result, model_score, model_label, config, model_failed)
 
     return ScanResult(
         decision=decision,
@@ -76,6 +79,7 @@ def scan(text: str, config: Config) -> ScanResult:
         details={
             "rules": rule_details,
             "model": config.model_name if config.use_ml else "disabled",
+            "model_failed": model_failed if config.use_ml else None,
             "thresholds": {
                 "block": config.block_threshold,
                 "caution": config.caution_threshold,
@@ -89,8 +93,13 @@ def _merge(
     model_score: float | None,
     model_label: str | None,
     config: Config,
+    model_failed: bool = False,
 ) -> tuple[str, float]:
-    """Merge rule and model results into a final decision and score."""
+    """Merge rule and model results into a final decision and score.
+
+    When model fails and fail_closed is enabled, treat as suspicious
+    (conservative — don't mark safe if we can't verify).
+    """
     # Rule HIGH + model says INJECTION → malicious
     if rule_result.has_high and model_score is not None and model_score >= config.block_threshold:
         return ("malicious", max(model_score, 0.95))
@@ -102,6 +111,11 @@ def _merge(
     # Model says block → malicious
     if model_score is not None and model_score >= config.block_threshold:
         return ("malicious", model_score)
+
+    # Model failed + fail_closed mode → treat as suspicious
+    if model_failed and config.fail_closed:
+        logger.warning("Model failed and fail_closed is enabled — treating as suspicious")
+        return ("suspicious", 0.5)
 
     # Rule MEDIUM or model caution → suspicious
     if rule_result.has_medium_or_above:

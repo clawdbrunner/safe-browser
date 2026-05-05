@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,11 +12,16 @@ logger = logging.getLogger(__name__)
 
 # Lazy-loaded singleton
 _model_instance: PromptGuardModel | None = None
+_model_key: tuple[str, str] | None = None  # (model_name, device)
 
 MODEL_FALLBACK_CHAIN = [
     "meta-llama/Llama-Prompt-Guard-2-86M",
     "protectai/deberta-v3-base-prompt-injection-v2",
 ]
+
+# Model-specific label mapping: id2label from model config
+# Some models label injection as index 1, others use different indices
+INJECTION_LABELS = {"INJECTION", "UNSAFE", "injection", "unsafe"}
 
 
 class ModelLoadError(Exception):
@@ -43,7 +47,19 @@ class PromptGuardModel:
             raise ModelLoadError(f"Failed to load model {model_name}: {e}") from e
 
         self.num_labels = self.model.config.num_labels
-        logger.info("Model loaded: %s (%d labels)", model_name, self.num_labels)
+        self.id2label = getattr(self.model.config, "id2label", {})
+
+        # Determine injection index from model config
+        self._injection_idx = self._find_injection_index()
+        logger.info("Model loaded: %s (%d labels, injection_idx=%d)", model_name, self.num_labels, self._injection_idx)
+
+    def _find_injection_index(self) -> int:
+        """Find the label index corresponding to injection/unsafe."""
+        for idx, label in self.id2label.items():
+            if label in INJECTION_LABELS:
+                return int(idx)
+        # Default: index 1 is injection for most classifiers
+        return 1
 
     def predict(self, text: str) -> tuple[float, str]:
         """Returns (injection_probability, label) where label is 'SAFE' or 'INJECTION'."""
@@ -63,8 +79,7 @@ class PromptGuardModel:
 
         probs = torch.softmax(logits, dim=-1)
 
-        # Both supported models use label index 1 for injection/unsafe
-        injection_prob = probs[0][1].item() if self.num_labels >= 2 else probs[0][0].item()
+        injection_prob = probs[0][self._injection_idx].item()
         label = "INJECTION" if injection_prob > 0.5 else "SAFE"
 
         return (injection_prob, label)
@@ -72,7 +87,6 @@ class PromptGuardModel:
 
 def load_model(model_name: str, device: str = "cpu") -> PromptGuardModel:
     """Load the specified model, falling back through the chain if needed."""
-    # Try requested model first
     names_to_try = [model_name] + [n for n in MODEL_FALLBACK_CHAIN if n != model_name]
 
     for name in names_to_try:
@@ -84,14 +98,16 @@ def load_model(model_name: str, device: str = "cpu") -> PromptGuardModel:
                 logger.info("Trying next fallback model...")
             continue
 
-    raise ModelLoadError("All models failed to load. Use rules-only mode.")
+    raise ModelLoadError("All models failed to load. Use --no-ml for rules-only mode.")
 
 
 def get_model(model_name: str, device: str = "cpu") -> PromptGuardModel:
-    """Get or create the cached model singleton."""
-    global _model_instance
-    if _model_instance is None or _model_instance.model_name != model_name:
+    """Get or create the cached model singleton. Reloads if model or device changes."""
+    global _model_instance, _model_key
+    key = (model_name, device)
+    if _model_instance is None or _model_key != key:
         _model_instance = load_model(model_name, device)
+        _model_key = key
     return _model_instance
 
 
