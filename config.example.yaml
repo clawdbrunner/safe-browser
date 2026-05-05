@@ -1,0 +1,24 @@
+# safe-browser configuration
+# Copy to ~/.config/safe-browser/config.yaml
+
+model:
+  # Primary: protectai/deberta-v3-base-prompt-injection-v2 (public, no auth)
+  # Alternative: meta-llama/Llama-Prompt-Guard-2-86M (requires HF token)
+  name: "protectai/deberta-v3-base-prompt-injection-v2"
+  device: "cpu"  # "cuda", "mps" for Apple Silicon
+  fallback_to_rules: true
+
+thresholds:
+  block: 0.9    # score >= this → malicious
+  caution: 0.5  # score >= this → suspicious
+
+rules:
+  enabled: true
+  custom_patterns: []
+  # Example custom pattern:
+  # - name: "my_rule"
+  #   pattern: "(?i)some pattern"
+  #   severity: "high"
+
+logging:
+  level: "WARNING"
