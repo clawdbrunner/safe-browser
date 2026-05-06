@@ -11,8 +11,6 @@ from .rules import RuleMatch, check_rules
 
 logger = logging.getLogger(__name__)
 
-MODEL_PRIORITY = ["rules", "promptguard", "browsesafe", "gpt-safeguard"]
-
 
 @dataclass
 class ScanResult:
@@ -44,36 +42,6 @@ class ScanResult:
             "rule_matches": self.rule_matches,
             "details": self.details,
         }
-
-
-def _merge_chain(results: list[tuple], config: Config) -> tuple[str, float]:
-    """Merge results from the model priority chain into a final decision."""
-    rule_result = None
-    best_model_score: float | None = None
-    best_model_label: str | None = None
-    model_failed = False
-
-    for entry in results:
-        if entry[0] == "rules":
-            rule_result = entry[1]
-        else:
-            # (model_name, score, label) or (model_name, None) for failed
-            if len(entry) == 3:
-                _, score, label = entry
-                if best_model_score is None or score > best_model_score:
-                    best_model_score = score
-                    best_model_label = label
-
-    if rule_result is None:
-        from .rules import RuleResult
-        rule_result = RuleResult(matches=[], max_severity="none")
-
-    # Check if all models failed (no model entries with scores)
-    model_entries = [e for e in results if e[0] != "rules"]
-    if model_entries and best_model_score is None:
-        model_failed = True
-
-    return _merge(rule_result, best_model_score, best_model_label, config, model_failed)
 
 
 def scan(text: str, config: Config, adapter: str | None = None) -> ScanResult:

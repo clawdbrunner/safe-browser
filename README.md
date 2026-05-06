@@ -1,59 +1,66 @@
 # safe-browser
 
-> Screen browser content for prompt injection attacks. Pluggable browser inputs, pluggable detection models.
+A CLI tool that screens browser content for prompt injection attacks before it reaches LLM agents.
 
-## Why?
+## Features
 
-AI agents browsing the web are exposed to prompt injection attacks — hidden HTML elements, social engineering footers, disguised system commands. **safe-browser** is a pre-processing layer that scans content *before* it reaches your LLM agent.
-
-## Install
-
-```bash
-pip install safe-browser
-```
+- **Multi-model detection** — Rule-based regex + ML models (DeBERTa, Llama Prompt Guard, BrowseSafe, GPT-OSS-Safeguard)
+- **Browser adapters** — Native parsing for Camoufox snapshots and agent-browser accessibility trees, with auto-detection
+- **CLI-first** — Pipe content from any browser tool: `agent-browser snapshot | safe-browser check`
+- **Offline-first** — All models run locally, no API calls required
+- **Graceful degradation** — Falls back to rules-only if ML models are unavailable
 
 ## Quick Start
 
 ```bash
-# Pipe from any browser tool
-agent-browser snapshot | safe-browser check
+pip install safe-browser
 
 # Check a string
-safe-browser check -c "Ignore all previous instructions"
+safe-browser check -c "some content from the web"
+
+# Pipe from browser tool
+agent-browser snapshot | safe-browser check
 
 # Check a file
 safe-browser check -f page.html
 
 # JSON output for scripts
-safe-browser check -f page.html --json
-
-# Rules only (no model download)
-echo "hello" | safe-browser check --no-ml
+safe-browser check -c "content" --json
 ```
 
-## How It Works
+## Exit Codes
 
+| Code | Meaning |
+|------|---------|
+| 0 | Safe — no injection detected |
+| 1 | Suspicious — flagged for review |
+| 2 | Malicious — prompt injection detected |
+
+## Supported Models
+
+| Model | Size | Speed | Auth Required |
+|-------|------|-------|---------------|
+| `protectai/deberta-v3-base-prompt-injection` (default) | 184M | ~50ms | No |
+| `meta-llama/Llama-Prompt-Guard-2-86M` | 86M | ~30ms | Yes (gated) |
+| `perplexity-ai/browsesafe` | — | ~100ms | No |
+| `openai/gpt-oss-safeguard-20b` | 20B | ~2s | Yes (gated) |
+| `rule-based` (always available) | — | ~1ms | No |
+
+## CLI Commands
+
+```bash
+safe-browser check [-c TEXT] [-f FILE] [--adapter ADAPTER] [--model MODEL] [--json] [--quiet]
+safe-browser doctor    # Pre-flight check
+safe-browser models    # List available models
 ```
-Browser Tool → raw HTML/text → safe-browser → exit code (0/1/2) → your agent
-                                       ↓
-                              Rule Engine + ML Model
-```
 
-**Two detection layers:**
+### Options
 
-1. **Rule engine** — regex patterns for known injection patterns (always runs, instant)
-2. **ML model** — neural classifier for subtle/obfuscated attacks (optional, ~2s first load)
-
-Both results merge into a single verdict: **SAFE** (exit 0), **SUSPICIOUS** (exit 1), or **MALICIOUS** (exit 2).
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `safe-browser check` | Scan content for attacks (primary) |
-| `safe-browser scan` | Alias for check |
-| `safe-browser doctor` | Verify config and model setup |
-| `safe-browser models` | List available detection models |
+- `--adapter / -a` — Input adapter: `auto`, `camoufox`, `agent-browser`, `raw`
+- `--model / -m` — Detection model: `promptguard`, `browsesafe`, `gpt-safeguard`, `rules`
+- `--json` — JSON output
+- `--quiet / -q` — Exit code only
+- `--no-ml` — Skip ML models, rules only
 
 ## Configuration
 
@@ -61,62 +68,23 @@ Config file: `~/.config/safe-browser/config.yaml`
 
 ```yaml
 model:
-  name: protectai/deberta-v3-base-prompt-injection-v2
+  name: promptguard
   device: cpu
-  fail_closed: true          # Treat as suspicious if model fails
+  fail_closed: true
+
+adapter:
+  default: auto
 
 thresholds:
-  block: 0.9                 # Above this → MALICIOUS
-  caution: 0.5               # Above this → SUSPICIOUS
-
-rules:
-  enabled: true
-  custom_patterns: []        # Add your own regex rules
-```
-
-## Detection Models
-
-| Model | Size | Speed | Best For |
-|-------|------|-------|----------|
-| `protectai/deberta-v3-base-prompt-injection-v2` | ~180MB | Fast | Default, balanced |
-| `meta-llama/Llama-Prompt-Guard-2-86M` | 86M params | Fastest | Real-time screening |
-| `rule-based` (built-in) | — | Instant | No model download |
-
-*Coming in Phase 2:* `perplexity-ai/browsesafe`, `openai/gpt-oss-safeguard-20b`
-
-## Integration Examples
-
-### With agent-browser
-```bash
-agent-browser snapshot | safe-browser check --json
-```
-
-### With Camoufox (via script)
-```bash
-safe-browser check -f /tmp/page_snapshot.html
-```
-
-### In Python
-```python
-from safe_browser.scanner import scan
-from safe_browser.config import Config
-
-config = Config(use_ml=False)  # or defaults
-result = scan("some web content", config)
-print(result.decision)   # "safe", "suspicious", "malicious"
-print(result.exit_code)  # 0, 1, 2
-```
-
-## Development
-
-```bash
-git clone https://github.com/clawdbrunner/safe-browser.git
-cd safe-browser
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-pytest
+  block: 0.9
+  caution: 0.5
 ```
 
 ## License
 
 MIT
+
+## Links
+
+- [GitHub](https://github.com/clawdbrunner/safe-browser)
+- [PyPI](https://pypi.org/project/safe-browser)

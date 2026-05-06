@@ -134,7 +134,7 @@ def parse_agent_browser_text(content: str) -> str:
             elif role:
                 parts.append(role)
             # Extract ref= identifier
-            ref_match = re.search(r'ref=(\S+)', line)
+            ref_match = re.search(r'ref=([^\s\]]+)', line)
             if ref_match:
                 parts.append(ref_match.group(1))
         else:
